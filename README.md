@@ -2,6 +2,12 @@
   <img src="public/banner.png" alt="Tack icon" width="600">
 </p>
 
+> **Fork notice.** This is a fork of [elvisperlika/tack](https://github.com/elvisperlika/tack)
+> (MIT licensed, © Elvis Perlika). My changes make notes bind to Electron and other
+> empty-accessibility-tree apps, and stabilize window identity when a title churns.
+> 本仓库基于 [elvisperlika/tack](https://github.com/elvisperlika/tack)（MIT 许可），改动用于支持
+> Electron 应用绑定与窗口标识稳定化。
+
 ---
 
 Sticky notes that stick to windows, not your desktop.
