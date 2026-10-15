@@ -16,7 +16,7 @@ final class TerminalContainer: GenericAppContainer {
 
     private let tty: String?
 
-    override init?(app: NSRunningApplication) {
+    override init(app: NSRunningApplication) {
         tty = TerminalContainer.currentTTY()
         super.init(app: app)
     }
@@ -32,12 +32,13 @@ final class TerminalContainer: GenericAppContainer {
     }
 
     override var path: [String] {
+        guard let ident else { return [bundleID] }  // empty AX tree → app level
         guard let tty else { return [bundleID, ident] }  // no tty → window level
         return [bundleID, ident, tty]
     }
 
     override var finestKey: String? {
-        guard let tty else { return nil }
+        guard ident != nil, let tty else { return nil }
         return Container.key(path: [bundleID, tty], level: 1)
     }
 }

@@ -13,6 +13,19 @@ enum AXWindows {
         focusedWindow(pid: pid).flatMap(bounds(of:))
     }
 
+    /// Electron/Chromium keeps its accessibility tree switched off until something asks for
+    /// it, so such a window reads as empty here and binds to nothing at all. Poking the app
+    /// element flips the tree on; it appears on the next poll (the tree builds asynchronously).
+    /// Idempotent, and a no-op on apps that already expose everything.
+    static func enableAccessibility(pid: pid_t) {
+        guard AXIsProcessTrusted() else { return }
+        let app = AXUIElementCreateApplication(pid)
+        // Both spellings are in the wild: Chromium answers AXEnhancedUserInterface, the
+        // AXManualAccessibility alias covers newer builds. Setting the wrong one is harmless.
+        AXUIElementSetAttributeValue(app, "AXManualAccessibility" as CFString, kCFBooleanTrue)
+        AXUIElementSetAttributeValue(app, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
+    }
+
     /// The frontmost app's focused window element, kept alive to attach AX notifications to.
     static func focusedWindow(pid: pid_t) -> AXUIElement? {
         guard AXIsProcessTrusted() else { return nil }

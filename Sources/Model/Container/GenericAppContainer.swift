@@ -3,23 +3,49 @@ import AppKit
 /// Any app window readable through the Accessibility API. AXDocument names the focused
 /// document and follows Preview's active tab; AXTitle is the fuzzy fallback and follows the
 /// Settings pane. Non-final: BrowserContainer and TerminalContainer refine the identity.
+///
+/// Never fails: an app whose AX tree is empty — an Electron window before it has been poked,
+/// or one that exposes nothing at all — binds at app level rather than returning nil, so
+/// "Add note here" still works and the note is found again if a window identity appears later
+/// (a coarser note is always reachable from a finer container through `load`).
 class GenericAppContainer: Container {
     let bundleID: String
     let pid: pid_t
-    let ident: String
 
-    init?(app: NSRunningApplication) {
-        guard let win = AXWindows.focusedWindow(pid: app.processIdentifier),
-            let id = AXWindows.string(win, kAXDocumentAttribute)
-                ?? AXWindows.string(win, kAXTitleAttribute),
-            !id.isEmpty
-        else { return nil }
+    /// The focused window's identity: AXDocument (a stable file path) when the app exposes one,
+    /// else its sanitized AXTitle. nil when the AX tree is empty; the note then binds to the app.
+    let ident: String?
+
+    /// Pids already asked to build their AX tree. The request is async and idempotent, and a
+    /// window that stays empty would otherwise re-poke every 0.4s poll for nothing.
+    private static var poked: Set<pid_t> = []
+
+    init(app: NSRunningApplication) {
         self.bundleID = app.bundleIdentifier ?? app.localizedName ?? "app"
         self.pid = app.processIdentifier
-        self.ident = id
+        if let id = GenericAppContainer.readIdent(pid: pid) {
+            self.ident = id
+        } else {
+            // Electron builds its tree lazily; ask once and let the next poll see it.
+            if GenericAppContainer.poked.insert(pid).inserted {
+                AXWindows.enableAccessibility(pid: pid)
+            }
+            self.ident = nil
+        }
     }
 
-    override var path: [String] { [bundleID, ident] }
+    /// AXDocument first (stable across close/reopen), then a sanitized title. nil if neither.
+    private static func readIdent(pid: pid_t) -> String? {
+        guard let win = AXWindows.focusedWindow(pid: pid) else { return nil }
+        if let doc = AXWindows.string(win, kAXDocumentAttribute), !doc.isEmpty { return doc }
+        guard let title = AXWindows.string(win, kAXTitleAttribute), !title.isEmpty else {
+            return nil
+        }
+        let clean = Container.sanitizeTitle(title)
+        return clean.isEmpty ? nil : clean
+    }
+
+    override var path: [String] { ident.map { [bundleID, $0] } ?? [bundleID] }
 
     override func note(at level: Int) throws -> Note? {
         let currentKey = key(at: level)

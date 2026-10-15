@@ -38,6 +38,7 @@ enum SelfTest {
         backspaceAtTheEnd()
         noteSizeIsOptional()
         urlNormalization()
+        containerTitleSanitize()
         notePreferencesPalette()
         fontFaces()
         pillGeometry()
@@ -907,5 +908,25 @@ extension SelfTest {
         // Anything unparseable is used as-is rather than crashing or collapsing to "".
         assert(BrowserContainer.normalize("notaurl") == "notaurl", "garbage should pass through")
         assert(BrowserContainer.normalize("") == "", "empty should pass through")
+    }
+
+    static func containerTitleSanitize() {
+        // A title that gains state while you watch must keep one identity, or the note vanishes.
+        assert(
+            Container.sanitizeTitle("(3) Inbox") == "Inbox", "leading unread count should strip")
+        assert(
+            Container.sanitizeTitle("* Report.md") == "Report.md", "unsaved glyph should strip")
+        assert(
+            Container.sanitizeTitle("project — src/main.swift — Edited") ==
+                "project — src/main.swift", "trailing Edited marker should strip")
+        assert(
+            Container.sanitizeTitle("Page 3 of 10") == "Page", "page counter should strip")
+
+        // A real title is left alone: numbers inside a name are not decorations.
+        assert(
+            Container.sanitizeTitle("Q3 Report") == "Q3 Report", "a real title must survive")
+        assert(
+            Container.sanitizeTitle("appnotes.json") == "appnotes.json",
+            "a clean title should pass through untouched")
     }
 }

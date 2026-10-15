@@ -14,18 +14,19 @@ final class BrowserContainer: GenericAppContainer {
     ]
     private let url: String?
 
-    override init?(app: NSRunningApplication) {
+    override init(app: NSRunningApplication) {
         url = AXWindows.focusedURL(pid: app.processIdentifier).map(BrowserContainer.normalize)
         super.init(app: app)
     }
 
     override var path: [String] {
+        guard let ident else { return [bundleID] }  // empty AX tree → app level
         guard let url, !url.isEmpty else { return [bundleID, ident] }  // no URL → window level
         return [bundleID, ident, url]
     }
 
     override var finestKey: String? {
-        guard let url, !url.isEmpty else { return nil }
+        guard ident != nil, let url, !url.isEmpty else { return nil }
         return Container.key(path: [bundleID, url], level: 1)
     }
 

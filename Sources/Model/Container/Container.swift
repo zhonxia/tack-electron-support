@@ -43,6 +43,27 @@ class Container {
     /// What the polling loop compares to decide whether the focused surface actually changed.
     var focusKey: String { key(at: finestLevel) }
 
+    /// A raw AXTitle is decorated with state the app rewrites while you watch — a leading
+    /// unread badge or unsaved dot, a "3 of 10" page counter. Left in the key, any of those
+    /// makes the same window look like a new one and its note disappears. Strip only the
+    /// decorations that are never part of the document's name: a real title that happens to
+    /// contain a number is left alone. Pure, so it can be tested without an app.
+    static func sanitizeTitle(_ raw: String) -> String {
+        let patterns = [
+            "^[\\*•●○∙·‧]\\s+",  // leading unsaved / status glyph
+            "^\\(\\d+\\)\\s*",  // leading unread count, "(3) Inbox"
+            "^\\[\\d+\\]\\s*",
+            "\\s*[–—-]\\s*(Edited|Modified|Unsaved)\\s*$",  // "Report — Edited"
+            "\\s+\\b\\d+\\s+of\\s+\\d+\\b",  // "3 of 10"
+        ]
+        var s = raw
+        for pattern in patterns {
+            s = s.replacingOccurrences(
+                of: pattern, with: "", options: [.regularExpression, .caseInsensitive])
+        }
+        return s.trimmingCharacters(in: .whitespaces)
+    }
+
     // MARK: - Storage (subclass supplies)
 
     func note(at level: Int) throws -> Note? { nil }
