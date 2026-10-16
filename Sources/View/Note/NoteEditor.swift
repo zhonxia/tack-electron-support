@@ -68,6 +68,7 @@ final class NoteEditor: NSObject, NSTextViewDelegate {
     /// adopted first: the parse bakes the fonts in.
     func load(_ text: String) {
         adoptFamily()
+        textView.cancelReorder()  // the window is reused: never carry a drag over
         textView.editBlock(at: 0)  // the window is reused: never carry a block selection over
         textView.textStorage?.setAttributedString(MarkdownDocument.parse(text))
         textView.typingAttributes = MarkdownStyle.base

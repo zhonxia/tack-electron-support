@@ -56,6 +56,44 @@ enum MarkdownDocument {
         ts.addAttribute(.foregroundColor, value: MarkdownStyle.dim, range: range)
     }
 
+    // MARK: - Reordering blocks
+
+    /// The note split into blocks, one per line, each without its trailing newline. Splitting the
+    /// newline off keeps the pieces uniform, so a block that was last can move into the middle and
+    /// back. Attributes travel with the characters, so a checkbox stays ticked and inline runs
+    /// stay bold. Pure — the drag to reorder and `--selftest` both go through it.
+    static func lines(_ attr: NSAttributedString) -> [NSAttributedString] {
+        let s = attr.string as NSString
+        var out: [NSAttributedString] = []
+        var loc = 0
+        while loc < s.length {
+            let line = s.lineRange(for: NSRange(location: loc, length: 0))
+            var content = attr.attributedSubstring(from: line)
+            if content.string.hasSuffix("\n") {
+                content = content.attributedSubstring(
+                    from: NSRange(location: 0, length: content.length - 1))
+            }
+            out.append(content)
+            loc = line.location + line.length
+        }
+        return out.isEmpty ? [NSAttributedString()] : out  // an empty note is one empty block
+    }
+
+    /// Rejoin `lines` in the given order, one newline between blocks and, when the note ended with
+    /// one, a trailing newline too. Pure.
+    static func join(_ lines: [NSAttributedString], order: [Int], trailingNewline: Bool)
+        -> NSAttributedString
+    {
+        let out = NSMutableAttributedString()
+        for (n, i) in order.enumerated() {
+            out.append(lines[i])
+            if n < order.count - 1 || trailingNewline {
+                out.append(NSAttributedString(string: "\n", attributes: MarkdownStyle.base))
+            }
+        }
+        return out
+    }
+
     // MARK: - Attributed -> markdown (save)
 
     static func serialize(_ attr: NSAttributedString) -> String {

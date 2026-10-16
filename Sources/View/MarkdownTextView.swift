@@ -10,7 +10,28 @@ final class MarkdownTextView: NSTextView {
     /// The selected block's paragraph range, or nil while editing. Nil is the normal state.
     private var selectedBlock: NSRange?
 
+    /// A press on a list marker that may become a reorder drag: which item, and where the press
+    /// landed. A tap (no movement) keeps the old behaviour — tick a todo, drop a caret after a
+    /// bullet; moving past the threshold moves the whole line instead.
+    private struct Grab {
+        var line: NSRange
+        var index: Int
+        var glyph: ListGlyph
+        var start: NSPoint
+    }
+
+    /// Where a dragged item would land: the list line under the cursor, and which edge of it.
+    private struct Drop {
+        var line: NSRange
+        var before: Bool
+    }
+
+    private var grab: Grab?
+    private var drop: Drop?
+    private var dragging = false
+
     private static let blockHighlight = NSColor.black.withAlphaComponent(0.07)  // a light grey wash
+    private static let dropIndicator = NSColor.controlAccentColor
 
     // MARK: - Block mode
 
@@ -93,6 +114,16 @@ final class MarkdownTextView: NSTextView {
             Self.blockHighlight.setFill()
             NSBezierPath(roundedRect: rect, xRadius: 4, yRadius: 4).fill()
         }
+        // The item being dragged wears the same wash; a line marks where it will land.
+        if dragging, let grab, let rect = blockRect(grab.line) {
+            Self.blockHighlight.setFill()
+            NSBezierPath(roundedRect: rect, xRadius: 4, yRadius: 4).fill()
+        }
+        if dragging, let drop, let rect = blockRect(drop.line) {
+            Self.dropIndicator.setFill()
+            let y = drop.before ? rect.minY : rect.maxY - 2
+            NSBezierPath(rect: NSRect(x: 4, y: y, width: bounds.width - 8, height: 2)).fill()
+        }
         super.draw(dirtyRect)
     }
 
@@ -113,21 +144,120 @@ final class MarkdownTextView: NSTextView {
         return NSRect(x: 2, y: box.minY + origin.y - 2, width: bounds.width - 4, height: box.height + 4)
     }
 
-    // MARK: - Checkboxes
+    // MARK: - Checkboxes and reordering
 
     override func mouseDown(with event: NSEvent) {
         onPress?()
         editBlock(at: selectedRange().location)  // a click is always editing
-        let i = characterIndexForInsertion(at: convert(event.locationInWindow, from: nil))
+        let point = convert(event.locationInWindow, from: nil)
+        let i = characterIndexForInsertion(at: point)
         guard let ts = textStorage else { return }
-        // A click on the attachment can resolve to either insertion side.
-        for cand in [i, i - 1] where cand >= 0 && cand < ts.length {
-            if let glyph = ListGlyph.at(ts, cand), glyph != .bullet {
-                toggleCheckbox(at: cand, glyph: glyph)
-                return
-            }
+        // A press on a list marker may become a reorder drag, so it owns the whole gesture: we
+        // don't hand it to NSTextView, which would start a text selection under it. A tap is
+        // resolved in mouseUp. Only list items are grabbable — reordering is their gesture alone.
+        if let (index, glyph) = glyphHit(near: i, in: ts) {
+            grab = Grab(line: Blocks.range(in: ts.string as NSString, at: index), index: index,
+                glyph: glyph, start: point)
+            return
         }
         super.mouseDown(with: event)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let grab else { super.mouseDragged(with: event); return }
+        let point = convert(event.locationInWindow, from: nil)
+        if !dragging {
+            let dx = point.x - grab.start.x
+            let dy = point.y - grab.start.y
+            guard dx * dx + dy * dy >= 16 else { return }  // ~4pt: below this it's still a tap
+            dragging = true
+        }
+        // Hovering the item itself is not a destination: no line, and a drop here is a no-op.
+        let slot = dropSlot(at: point)
+        drop = slot?.line.location == grab.line.location ? nil : slot
+        needsDisplay = true
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        defer {
+            grab = nil
+            drop = nil
+            dragging = false
+            needsDisplay = true
+        }
+        guard let grab else { return }
+        guard dragging, let drop else {
+            // A tap, not a drag: tick the todo, or just drop the caret after a bullet.
+            if grab.glyph == .bullet {
+                editBlock(at: grab.index + ListGlyph.width)
+            } else {
+                toggleCheckbox(at: grab.index, glyph: grab.glyph)
+            }
+            return
+        }
+        moveBlock(from: grab.line, to: drop)
+    }
+
+    /// Drop any in-flight reorder drag — the view is being reused for another note under it.
+    func cancelReorder() {
+        grab = nil
+        drop = nil
+        dragging = false
+        needsDisplay = true
+    }
+
+    // The marker attachment can resolve to either side of the insertion point.
+    private func glyphHit(near i: Int, in ts: NSTextStorage) -> (Int, ListGlyph)? {
+        for cand in [i, i - 1] where cand >= 0 && cand < ts.length {
+            if let glyph = ListGlyph.at(ts, cand) { return (cand, glyph) }
+        }
+        return nil
+    }
+
+    /// Where a dragged item would land: the list line under `point`, and the nearer edge. nil
+    /// when the cursor is not over a list item, so a note can't drop one into a paragraph.
+    private func dropSlot(at point: NSPoint) -> Drop? {
+        guard let ts = textStorage else { return nil }
+        let ns = ts.string as NSString
+        guard ns.length > 0 else { return nil }
+        let i = min(max(0, characterIndexForInsertion(at: point)), ns.length)
+        let line = Blocks.range(in: ns, at: i)
+        guard ListGlyph.at(ts, line.location) != nil else { return nil }
+        let rect = blockRect(line) ?? .zero
+        return Drop(line: line, before: point.y < rect.midY)
+    }
+
+    /// Move a whole line to a new slot. Rebuilds the buffer from reordered blocks in one
+    /// replacement, so the change is a single undo and the save fires once.
+    private func moveBlock(from source: NSRange, to drop: Drop) {
+        guard let ts = textStorage else { return }
+        let ranges = lineRanges(in: ts.string as NSString)
+        guard
+            let from = ranges.firstIndex(where: { $0.location == source.location }),
+            let to = ranges.firstIndex(where: { $0.location == drop.line.location }),
+            let order = Blocks.reorder(count: ranges.count, from: from, to: to, before: drop.before)
+        else { return }
+
+        let lines = MarkdownDocument.lines(ts)
+        let rebuilt = MarkdownDocument.join(
+            lines, order: order, trailingNewline: (ts.string as NSString).hasSuffix("\n"))
+        let full = NSRange(location: 0, length: ts.length)
+        guard shouldChangeText(in: full, replacementString: rebuilt.string) else { return }
+        ts.replaceCharacters(in: full, with: rebuilt)
+        didChangeText()
+        let caret = order.prefix(while: { $0 != from }).reduce(0) { $0 + lines[$1].length + 1 }
+        setSelectedRange(NSRange(location: min(caret, (string as NSString).length), length: 0))
+    }
+
+    private func lineRanges(in ns: NSString) -> [NSRange] {
+        var out: [NSRange] = []
+        var loc = 0
+        while loc < ns.length {
+            let r = ns.lineRange(for: NSRange(location: loc, length: 0))
+            out.append(r)
+            loc = r.location + r.length
+        }
+        return out.isEmpty ? [NSRange(location: 0, length: 0)] : out
     }
 
     private func toggleCheckbox(at i: Int, glyph: ListGlyph) {

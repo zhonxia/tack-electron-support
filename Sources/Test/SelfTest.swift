@@ -39,6 +39,8 @@ enum SelfTest {
         noteSizeIsOptional()
         urlNormalization()
         containerTitleSanitize()
+        blockReorder()
+        lineReorder()
         notePreferencesPalette()
         fontFaces()
         pillGeometry()
@@ -928,5 +930,47 @@ extension SelfTest {
         assert(
             Container.sanitizeTitle("appnotes.json") == "appnotes.json",
             "a clean title should pass through untouched")
+    }
+
+    static func blockReorder() {
+        // Moving an item to a new slot rewrites the order; dropping it onto itself does not.
+        assert(Blocks.reorder(count: 3, from: 0, to: 2, before: false) == [1, 2, 0], "move to end")
+        assert(Blocks.reorder(count: 3, from: 2, to: 0, before: true) == [2, 0, 1], "move to front")
+        assert(Blocks.reorder(count: 2, from: 0, to: 1, before: false) == [1, 0], "swap down")
+
+        // No-ops: onto itself, or onto either of its own edges — the drag should do nothing.
+        assert(Blocks.reorder(count: 3, from: 1, to: 1, before: true) == nil, "onto itself")
+        assert(
+            Blocks.reorder(count: 3, from: 1, to: 0, before: false) == nil, "onto its own top edge")
+        assert(
+            Blocks.reorder(count: 3, from: 1, to: 2, before: true) == nil, "onto its own bottom edge")
+
+        // Out-of-range indices are rejected rather than crashing.
+        assert(Blocks.reorder(count: 0, from: 0, to: 0, before: true) == nil, "empty is a no-op")
+        assert(Blocks.reorder(count: 2, from: 5, to: 0, before: true) == nil, "bad index rejected")
+    }
+
+    static func lineReorder() {
+        MarkdownStyle.family = .sans
+        let md = "- [ ] a\n- [x] b\n- c\n"
+        let lines = MarkdownDocument.lines(MarkdownDocument.parse(md))
+        assert(lines.count == 3, "expected 3 blocks, got \(lines.count)")
+
+        // Identity reorder must round-trip byte for byte — nothing is normalized away on the way.
+        let same = MarkdownDocument.join(lines, order: [0, 1, 2], trailingNewline: true)
+        assert(
+            MarkdownDocument.serialize(same) == md,
+            "identity reorder changed the note: \(MarkdownDocument.serialize(same))")
+
+        // Moving the first item to the end keeps each item's tick and text intact.
+        let moved = MarkdownDocument.join(lines, order: [1, 2, 0], trailingNewline: true)
+        assert(
+            MarkdownDocument.serialize(moved) == "- [x] b\n- c\n- [ ] a\n",
+            "reorder wrong: \(MarkdownDocument.serialize(moved))")
+
+        // A note with no trailing newline rejoins without inventing one.
+        let noTail = MarkdownDocument.lines(MarkdownDocument.parse("a\nb"))
+        let swapped = MarkdownDocument.join(noTail, order: [1, 0], trailingNewline: false)
+        assert(MarkdownDocument.serialize(swapped) == "b\na", "trailing newline invented or lost")
     }
 }

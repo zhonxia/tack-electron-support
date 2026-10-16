@@ -23,6 +23,21 @@ enum Blocks {
         let end = min(block.location + block.length, text.length)
         return text.substring(with: block).hasSuffix("\n") ? end - 1 : end
     }
+
+    /// The new order of `count` blocks when the one at `from` is dropped just before (or after)
+    /// the one at `to`. nil when the move is a no-op — dropping a block onto itself or onto
+    /// either of its own edges — so the caller can skip the edit entirely. Pure, so a reorder can
+    /// be asserted without a text view.
+    static func reorder(count: Int, from: Int, to: Int, before: Bool) -> [Int]? {
+        guard count > 0, (0..<count).contains(from), (0..<count).contains(to) else { return nil }
+        var dest = before ? to : to + 1
+        guard dest != from, dest != from + 1 else { return nil }
+        var order = Array(0..<count)
+        let item = order.remove(at: from)
+        if dest > from { dest -= 1 }
+        order.insert(item, at: dest)
+        return order
+    }
 }
 
 /// Live "type markdown, get formatting" rules for the rich note editor. Every mutation goes
