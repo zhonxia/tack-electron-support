@@ -262,6 +262,10 @@ final class MarkdownTextView: NSTextView {
 
     private func toggleCheckbox(at i: Int, glyph: ListGlyph) {
         guard let ts = textStorage else { return }
+        // The tick and the sink that follows are one gesture, so they must undo together.
+        undoManager?.beginUndoGrouping()
+        defer { undoManager?.endUndoGrouping() }
+
         let becomingDone = glyph == .todoOpen
         let replacement = (becomingDone ? ListGlyph.todoDone : .todoOpen)
             .symbol(attributes: MarkdownStyle.base)
@@ -275,14 +279,52 @@ final class MarkdownTextView: NSTextView {
         let ns = ts.string as NSString
         let line = ns.lineRange(for: NSRange(location: i, length: 0))
         let contentLen = line.length - ListGlyph.width - (ns.substring(with: line).hasSuffix("\n") ? 1 : 0)
-        guard contentLen > 0 else { return }
-        let range = NSRange(location: line.location + ListGlyph.width, length: contentLen)
-        if becomingDone {
-            MarkdownDocument.strikeThrough(ts, range)
-        } else {
-            ts.removeAttribute(.strikethroughStyle, range: range)
-            ts.addAttribute(.foregroundColor, value: MarkdownStyle.textColor, range: range)
+        if contentLen > 0 {
+            let range = NSRange(location: line.location + ListGlyph.width, length: contentLen)
+            if becomingDone {
+                MarkdownDocument.strikeThrough(ts, range)
+            } else {
+                ts.removeAttribute(.strikethroughStyle, range: range)
+                ts.addAttribute(.foregroundColor, value: MarkdownStyle.textColor, range: range)
+            }
         }
+
+        // Ticked items sink below the open ones in their own list, un-ticked ones rise back.
+        sinkToggled(at: line)
+    }
+
+    /// Re-lay the list the toggled item belongs to so open items come first and done ones last,
+    /// each group keeping its order. Only the contiguous run of list items around the line is
+    /// touched, so a heading above or a paragraph below never moves.
+    private func sinkToggled(at line: NSRange) {
+        guard let ts = textStorage else { return }
+        let ranges = lineRanges(in: ts.string as NSString)
+        guard let idx = ranges.firstIndex(where: { $0.location == line.location }) else { return }
+        let run = listRun(around: idx, in: ranges, ts: ts)
+        let isDone: (Int) -> Bool = { ListGlyph.at(ts, ranges[$0].location) == .todoDone }
+        guard let sunk = Blocks.sink(run, isDone: isDone) else { return }
+
+        var order = Array(0..<ranges.count)
+        order.replaceSubrange(run, with: sunk)
+        let lines = MarkdownDocument.lines(ts)
+        let rebuilt = MarkdownDocument.join(
+            lines, order: order, trailingNewline: (ts.string as NSString).hasSuffix("\n"))
+        let full = NSRange(location: 0, length: ts.length)
+        guard shouldChangeText(in: full, replacementString: rebuilt.string) else { return }
+        ts.replaceCharacters(in: full, with: rebuilt)
+        didChangeText()
+        let caret = order.prefix(while: { $0 != idx }).reduce(0) { $0 + lines[$1].length + 1 }
+        setSelectedRange(NSRange(location: min(caret, (string as NSString).length), length: 0))
+    }
+
+    /// The maximal run of adjacent list lines around `idx` — the list the item lives in.
+    private func listRun(around idx: Int, in ranges: [NSRange], ts: NSTextStorage) -> Range<Int> {
+        func isList(_ i: Int) -> Bool { ListGlyph.at(ts, ranges[i].location) != nil }
+        var lo = idx
+        var hi = idx
+        while lo - 1 >= 0 && isList(lo - 1) { lo -= 1 }
+        while hi + 1 < ranges.count && isList(hi + 1) { hi += 1 }
+        return lo..<(hi + 1)
     }
 
     // ⌘B / ⌘I reach here through the responder chain from the invisible Edit menu (the text view

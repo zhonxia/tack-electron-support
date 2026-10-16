@@ -41,6 +41,7 @@ enum SelfTest {
         containerTitleSanitize()
         blockReorder()
         lineReorder()
+        todoSink()
         notePreferencesPalette()
         fontFaces()
         pillGeometry()
@@ -972,5 +973,20 @@ extension SelfTest {
         let noTail = MarkdownDocument.lines(MarkdownDocument.parse("a\nb"))
         let swapped = MarkdownDocument.join(noTail, order: [1, 0], trailingNewline: false)
         assert(MarkdownDocument.serialize(swapped) == "b\na", "trailing newline invented or lost")
+    }
+
+    static func todoSink() {
+        // Ticking sinks an item below the still-open ones, keeping both groups' order.
+        assert(Blocks.sink(0..<3, isDone: { $0 == 1 }) == [0, 2, 1], "ticked item sinks")
+        assert(Blocks.sink(0..<3, isDone: { $0 == 0 }) == [1, 2, 0], "first item sinks to the bottom")
+        assert(Blocks.sink(0..<4, isDone: { $0 == 2 }) == [0, 1, 3, 2], "one check moves one place")
+
+        // Un-ticking rises back above the done ones — the same partition, read the other way.
+        assert(Blocks.sink(0..<3, isDone: { $0 == 1 }) == [0, 2, 1], "un-ticked item rises")
+
+        // Already ordered, or alone: nothing to do.
+        assert(Blocks.sink(0..<3, isDone: { $0 == 2 }) == nil, "an item already last stays")
+        assert(Blocks.sink(0..<1, isDone: { _ in true }) == nil, "a single item never moves")
+        assert(Blocks.sink(0..<3, isDone: { _ in false }) == nil, "all open: no move")
     }
 }

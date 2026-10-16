@@ -38,6 +38,15 @@ enum Blocks {
         order.insert(item, at: dest)
         return order
     }
+
+    /// Sink ticked items below their un-ticked siblings: a stable partition of a list run — open
+    /// items keep their order, then done ones keep theirs. Ticking sinks an item; un-ticking rises
+    /// it back above the done ones, symmetrically. Returns the run's new index order, or nil when
+    /// nothing moves. Pure.
+    static func sink(_ run: Range<Int>, isDone: (Int) -> Bool) -> [Int]? {
+        let order = run.filter { !isDone($0) } + run.filter { isDone($0) }
+        return order == Array(run) ? nil : order
+    }
 }
 
 /// Live "type markdown, get formatting" rules for the rich note editor. Every mutation goes
